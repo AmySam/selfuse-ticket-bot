@@ -44,6 +44,51 @@ function getSubmitButton(form) {
     return form.querySelector('button[type="submit"]');
 }
 
+async function testFeishuWebhook() {
+    const webhookInput = document.getElementById("feishu-bot-id");
+    const testButton = document.getElementById("test-feishu-webhook");
+    const status = document.getElementById("feishu-webhook-status");
+    const webhookUrl = (webhookInput.value || "").trim();
+
+    status.className = "webhook-status";
+    if (!/^https:\/\/(?:open\.)?feishu\.cn\/open-apis\/bot\/v2\/hook\//i.test(webhookUrl)) {
+        status.textContent = "请输入有效的飞书机器人 Webhook。";
+        status.classList.add("error");
+        return;
+    }
+
+    testButton.disabled = true;
+    status.textContent = "正在发送测试消息...";
+
+    try {
+        const response = await fetch(webhookUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                msg_type: "text",
+                content: {
+                    text: `[${new Date().toLocaleString()}] 抢票助手 EasyConcertKorea Webhook 测试成功`,
+                },
+            }),
+        });
+        const result = await response.json();
+        const resultCode = result.code ?? result.StatusCode;
+        if (!response.ok || (resultCode !== undefined && Number(resultCode) !== 0)) {
+            throw new Error(result.msg || result.StatusMessage || `HTTP ${response.status}`);
+        }
+
+        status.textContent = "测试成功，请检查飞书群消息。";
+        status.classList.add("success");
+    } catch (error) {
+        status.textContent = `测试失败：${error.message || error}`;
+        status.classList.add("error");
+    } finally {
+        testButton.disabled = false;
+    }
+}
+
 function normalizeBookingData(form) {
     let data = {};
     const formData = new FormData(form);
@@ -129,6 +174,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     await waitForIncludedFields();
     const form = document.querySelector('form');
     await loadEditData(form);
+    document.getElementById("test-feishu-webhook")?.addEventListener("click", testFeishuWebhook);
 
     form.addEventListener('submit', async function (event) {
         event.preventDefault();

@@ -123,6 +123,33 @@ button:hover {
     color: #ebe0f9;
 }
 
+button.secondary-button {
+    align-self: flex-start;
+    background-color: #fff;
+    border: 1px solid #2f056b;
+    color: #2f056b;
+    font-size: 14px;
+    padding: 8px 12px;
+}
+
+button.secondary-button:disabled {
+    cursor: wait;
+    opacity: 0.6;
+}
+
+.webhook-status {
+    font-size: 12px;
+    min-height: 18px;
+}
+
+.webhook-status.success {
+    color: #16803c;
+}
+
+.webhook-status.error {
+    color: #c62828;
+}
+
 form .button-concert {
     width: auto;
     min-width: 120px;

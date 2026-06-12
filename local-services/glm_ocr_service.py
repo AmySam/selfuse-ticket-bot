@@ -268,6 +268,7 @@ def make_handler(
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Private-Network", "true")
             super().end_headers()
 
         def do_OPTIONS(self) -> None:  # noqa: N802
@@ -320,8 +321,15 @@ def make_handler(
                 if len(result["text"]) != code_length:
                     result["ok"] = False
                     result["error"] = f"Expected {code_length} letters, got {len(result['text'])}."
+                print(
+                    f"[OCR] ok={result['ok']} text={result['text']!r} "
+                    f"raw={result['rawText']!r} elapsedMs={result['elapsedMs']} "
+                    f"image={image.width}x{image.height}",
+                    flush=True,
+                )
                 self.write_json(result)
             except Exception as error:  # pragma: no cover - runtime diagnostics
+                print(f"[OCR] error={type(error).__name__}: {error}", flush=True)
                 self.write_json({
                     "ok": False,
                     "error": f"{type(error).__name__}: {error}",
