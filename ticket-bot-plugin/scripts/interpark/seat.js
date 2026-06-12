@@ -71,23 +71,50 @@
         return String(value || "").replace(/[^\d]/g, "").slice(0, 4);
     }
 
-    function getConfiguredDates() {
+    function parseConfiguredDateTime(value) {
+        const text = String(value || "").trim();
+        const dateMatch = text.match(/(\d{4})\D?(\d{1,2})\D?(\d{1,2})/);
+        const timeMatch = text.match(/(?:^|\s)(\d{1,2})\s*:\s*(\d{2})(?:\s|$)/);
+        if (!dateMatch) {
+            return null;
+        }
+
+        return {
+            date: `${dateMatch[1]}${dateMatch[2].padStart(2, "0")}${dateMatch[3].padStart(2, "0")}`,
+            time: timeMatch ? `${timeMatch[1].padStart(2, "0")}${timeMatch[2]}` : "",
+        };
+    }
+
+    function getConfiguredDateTimes() {
+        const configuredDateTimes = activeConfig && activeConfig.dateTimes;
+        const dateTimeSource = Array.isArray(configuredDateTimes)
+            ? configuredDateTimes
+            : String(configuredDateTimes || "").split(",");
+        const dateTimes = dateTimeSource
+            .map(parseConfiguredDateTime)
+            .filter(Boolean);
+        if (dateTimes.length) {
+            return dateTimes;
+        }
+
         const configured = activeConfig && activeConfig.dates;
         const source = Array.isArray(configured)
             ? configured
             : String(configured || "").split(",");
+        const sharedTime = normalizeTimeValue(activeConfig && activeConfig.time);
         const dates = source
             .map(normalizeDateValue)
-            .filter(value => value.length === 8);
+            .filter(value => value.length === 8)
+            .map(date => ({ date, time: sharedTime }));
         const fallback = normalizeDateValue(activeConfig && activeConfig.date);
         if (!dates.length && fallback.length === 8) {
-            dates.push(fallback);
+            dates.push({ date: fallback, time: sharedTime });
         }
-        return Array.from(new Set(dates));
+        return dates;
     }
 
     function getDateRotationIndex() {
-        const dates = getConfiguredDates();
+        const dates = getConfiguredDateTimes();
         const configuredIndex = Number(activeConfig && activeConfig.dateRotationIndex);
         if (!dates.length || !Number.isFinite(configuredIndex)) {
             return 0;
@@ -96,8 +123,14 @@
     }
 
     function getActiveTargetDate() {
-        const dates = getConfiguredDates();
-        return dates[getDateRotationIndex()] || "";
+        const dates = getConfiguredDateTimes();
+        return dates[getDateRotationIndex()]?.date || "";
+    }
+
+    function getActiveTargetTime() {
+        const dates = getConfiguredDateTimes();
+        return dates[getDateRotationIndex()]?.time
+            || normalizeTimeValue(activeConfig && activeConfig.time);
     }
 
     function notifyFeishu(message) {
@@ -1597,7 +1630,7 @@
             }
         }
 
-        const desiredTime = normalizeTimeValue(activeConfig && activeConfig.time);
+        const desiredTime = getActiveTargetTime();
         if (desiredTime) {
             const selects = Array.from(document.querySelectorAll("select"));
             for (const select of selects) {
@@ -2251,14 +2284,14 @@
 
     function chooseDateTimeOption(options) {
         const targetDate = getActiveTargetDate();
-        const targetTime = normalizeTimeValue(activeConfig && activeConfig.time);
+        const targetTime = getActiveTargetTime();
 
         const exact = options.find(option => {
             const dateMatches = !targetDate || option.playDate === targetDate;
             const timeMatches = !targetTime || option.playTime === targetTime || normalizeTimeValue(option.text).includes(targetTime);
             return dateMatches && timeMatches;
         }) || options.find(option => !targetDate || option.playDate === targetDate);
-        if (exact || getConfiguredDates().length > 1) {
+        if (exact || getConfiguredDateTimes().length > 1) {
             return exact || null;
         }
         return options[0] || null;
@@ -2267,14 +2300,14 @@
     function choosePlayDateOption(options) {
         const targetDate = getActiveTargetDate();
         const exact = options.find(option => !targetDate || option.playDate === targetDate);
-        if (exact || getConfiguredDates().length > 1) {
+        if (exact || getConfiguredDateTimes().length > 1) {
             return exact || null;
         }
         return options[0] || null;
     }
 
     function choosePlaySeqOption(options) {
-        const targetTime = normalizeTimeValue(activeConfig && activeConfig.time);
+        const targetTime = getActiveTargetTime();
         return options.find(option => !targetTime || option.playTime === targetTime || normalizeTimeValue(option.text).includes(targetTime))
             || options[0]
             || null;
@@ -2403,7 +2436,7 @@
             return null;
         }
 
-        const configuredDates = new Set(getConfiguredDates());
+        const configuredDates = new Set(getConfiguredDateTimes().map(item => item.date));
         return Array.from(seatDocument.querySelectorAll("select")).find(select => {
             const optionDates = Array.from(select.options || [])
                 .map(getOptionDate)
@@ -2412,18 +2445,33 @@
         }) || null;
     }
 
-    function findSeatTimeSelect() {
+    function findSeatTimeOption(targetTime) {
         const seatDocument = getSeatDocument();
-        const targetTime = normalizeTimeValue(activeConfig && activeConfig.time);
         if (!seatDocument || !targetTime) {
             return null;
         }
 
-        return Array.from(seatDocument.querySelectorAll("select")).find(select => {
-            return Array.from(select.options || []).some(option => {
-                return getOptionTime(option) === targetTime;
+        for (const select of Array.from(seatDocument.querySelectorAll("select"))) {
+            const option = Array.from(select.options || []).find(item => {
+                return getOptionTime(item) === targetTime;
             });
-        }) || null;
+            if (option) {
+                return { select, option };
+            }
+        }
+        return null;
+    }
+
+    async function waitForSeatTimeOption(targetTime, timeoutMs = 12000) {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < timeoutMs) {
+            const match = findSeatTimeOption(targetTime);
+            if (match && !match.select.disabled) {
+                return match;
+            }
+            await delay(300);
+        }
+        return null;
     }
 
     async function selectDateInSeatPage(targetDate) {
@@ -2443,33 +2491,47 @@
         dateSelect.value = option.value;
         dispatchFieldEvents(dateSelect);
         updateStatus(`Selected date ${targetDate} from the seat-page selector.`);
-        await delay(800);
 
-        const timeSelect = findSeatTimeSelect();
-        const targetTime = normalizeTimeValue(activeConfig && activeConfig.time);
-        if (timeSelect && targetTime) {
-            const timeOption = Array.from(timeSelect.options || []).find(item => {
-                return getOptionTime(item) === targetTime;
-            });
-            if (timeOption) {
-                timeSelect.value = timeOption.value;
-                dispatchFieldEvents(timeSelect);
-                updateStatus(`Selected time ${targetTime.slice(0, 2)}:${targetTime.slice(2)}.`);
-                await delay(800);
-            }
+        const targetTime = getActiveTargetTime();
+        if (!targetTime) {
+            await delay(800);
+            return true;
         }
 
+        updateStatus(`Waiting for time ${targetTime.slice(0, 2)}:${targetTime.slice(2)} after date change.`);
+        const timeMatch = await waitForSeatTimeOption(targetTime);
+        if (!timeMatch) {
+            updateStatus(`Target time ${targetTime.slice(0, 2)}:${targetTime.slice(2)} is not available for ${targetDate}.`);
+            return false;
+        }
+
+        timeMatch.select.value = timeMatch.option.value;
+        dispatchFieldEvents(timeMatch.select);
+        await delay(800);
+
+        const selectedOption = timeMatch.select.options[timeMatch.select.selectedIndex];
+        if (getOptionTime(selectedOption) !== targetTime) {
+            updateStatus(`Time selection failed for ${targetTime.slice(0, 2)}:${targetTime.slice(2)}.`);
+            return false;
+        }
+
+        updateStatus(`Selected time ${targetTime.slice(0, 2)}:${targetTime.slice(2)}.`);
         return true;
     }
 
     async function rotateToNextDate() {
-        const dates = getConfiguredDates();
-        if (dates.length < 2) {
+        const dateTimes = getConfiguredDateTimes();
+        if (dateTimes.length < 2) {
             return false;
         }
 
-        const nextIndex = (getDateRotationIndex() + 1) % dates.length;
-        updateStatus(`Switching date to ${dates[nextIndex]} in the current booking session.`);
+        const nextIndex = (getDateRotationIndex() + 1) % dateTimes.length;
+        const nextTarget = dateTimes[nextIndex];
+        updateStatus(
+            `Switching to ${nextTarget.date}`
+            + `${nextTarget.time ? ` ${nextTarget.time.slice(0, 2)}:${nextTarget.time.slice(2)}` : ""}`
+            + " in the current booking session."
+        );
 
         activeConfig = Object.assign({}, activeConfig, {
             dateRotationIndex: nextIndex,
@@ -2477,13 +2539,13 @@
         await storeActiveRunConfig();
         dateScanRoundCount = 0;
 
-        if (await selectDateInSeatPage(dates[nextIndex])) {
+        if (await selectDateInSeatPage(nextTarget.date)) {
             return waitForSeatStep();
         }
 
         const changeDateElement = findChangeDateElement();
         if (!changeDateElement) {
-            updateStatus(`Date rotation blocked: no seat-page date selector or change-date control for ${dates[nextIndex]}.`);
+            updateStatus(`Date rotation blocked: no seat-page date selector or change-date control for ${nextTarget.date}.`);
             return false;
         }
         if (!await clickElement(changeDateElement) || !await waitForDateTimeStep()) {
@@ -3070,11 +3132,14 @@
                 updateStatus(`Found ${available} available seat(s): ${formatSummary(summary)}${areaText}`);
             }
 
-            if (getConfiguredDates().length > 1) {
+            if (getConfiguredDateTimes().length > 1) {
                 dateScanRoundCount += 1;
-                const dates = getConfiguredDates();
+                const dateTimes = getConfiguredDateTimes();
+                const currentTarget = dateTimes[getDateRotationIndex()];
                 updateStatus(
-                    `Date ${dates[getDateRotationIndex()]} scan round `
+                    `Date ${currentTarget.date}`
+                    + `${currentTarget.time ? ` ${currentTarget.time.slice(0, 2)}:${currentTarget.time.slice(2)}` : ""}`
+                    + " scan round "
                     + `${dateScanRoundCount}/${getDateRotationRounds()}.`
                 );
                 if (dateScanRoundCount >= getDateRotationRounds()) {

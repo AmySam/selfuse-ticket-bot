@@ -25,8 +25,8 @@ document.addEventListener("include-html-loaded", function() {
         settings.innerHTML = `
             <div class="form-section-title">Interpark 轮询设置</div>
             <div class="form-row">
-                <label for="dates">轮询日期</label>
-                <input type="text" id="dates" name="dates" placeholder="逗号分隔，如 2026-06-20,2026-06-21">
+                <label for="dateTimes">轮询日期时间</label>
+                <input type="text" id="dateTimes" name="dateTimes" placeholder="如 2026-07-10 19:00, 2026-07-11 18:00">
             </div>
             <div class="form-row">
                 <label for="dateRotationRounds">每个日期扫描轮数</label>

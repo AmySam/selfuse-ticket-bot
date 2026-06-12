@@ -107,6 +107,12 @@ function normalizeBookingData(form) {
             .map(item => item.trim())
             .filter(Boolean);
     }
+    if (Object.prototype.hasOwnProperty.call(data, "dateTimes")) {
+        data.dateTimes = (data.dateTimes || "")
+            .split(",")
+            .map(item => item.trim())
+            .filter(Boolean);
+    }
     data.platform = platformParam || getSubmitButton(form).id;
     return data;
 }
@@ -136,7 +142,7 @@ function fillForm(data) {
             return;
         }
 
-        input.value = Array.isArray(value) ? value.join(",") : value;
+        input.value = Array.isArray(value) ? value.join(", ") : value;
     });
 }
 

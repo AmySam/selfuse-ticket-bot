@@ -80,8 +80,10 @@ function createConcertItem(booking, index) {
     concertId.textContent = `演出链接/ID: ${booking["concert-id"] || ""}`;
 
     let date = document.createElement("p");
-    const bookingDates = Array.isArray(booking.dates) && booking.dates.length
-        ? booking.dates.join(", ")
+    const bookingDates = Array.isArray(booking.dateTimes) && booking.dateTimes.length
+        ? booking.dateTimes.join(", ")
+        : Array.isArray(booking.dates) && booking.dates.length
+        ? booking.dates.map(value => `${value} ${booking.time || ""}`.trim()).join(", ")
         : booking.date || "";
     date.textContent = `日期: ${bookingDates}`;
 
@@ -111,7 +113,10 @@ function createConcertItem(booking, index) {
         maxSeatRow.textContent = Number(seatRowValue) > 0 ? `座位排过滤: 前 ${seatRowValue} 排` : "座位排过滤: 不限制";
         concertInfo.appendChild(maxSeatRow);
 
-        if (Array.isArray(booking.dates) && booking.dates.length > 1) {
+        const rotationCount = Array.isArray(booking.dateTimes) && booking.dateTimes.length
+            ? booking.dateTimes.length
+            : Array.isArray(booking.dates) ? booking.dates.length : 0;
+        if (rotationCount > 1) {
             let dateRotation = document.createElement("p");
             dateRotation.textContent = `日期轮询: 每个日期 ${getBookingValue(booking, "dateRotationRounds", interparkDefaults.dateRotationRounds || 3)} 轮`;
             concertInfo.appendChild(dateRotation);
