@@ -1,6 +1,7 @@
 document.addEventListener("include-html-loaded", function() {
     const concertIdInput = document.getElementById("concert-id");
     const sectionInput = document.getElementById("section");
+    const dateInput = document.getElementById("date");
     const fieldset = document.querySelector("fieldset");
 
     if (concertIdInput) {
@@ -11,11 +12,26 @@ document.addEventListener("include-html-loaded", function() {
         sectionInput.placeholder = "可填多个区域，逗号分隔，如 004,005";
     }
 
+    if (dateInput) {
+        const dateLabel = document.querySelector('label[for="date"]');
+        if (dateLabel) {
+            dateLabel.textContent = "单一日期（未填写轮询日期时使用）";
+        }
+    }
+
     if (fieldset && !document.getElementById("areaScanIntervalMs")) {
         const settings = document.createElement("div");
         settings.className = "interpark-extra-config";
         settings.innerHTML = `
             <div class="form-section-title">Interpark 轮询设置</div>
+            <div class="form-row">
+                <label for="dates">轮询日期</label>
+                <input type="text" id="dates" name="dates" placeholder="逗号分隔，如 2026-06-20,2026-06-21">
+            </div>
+            <div class="form-row">
+                <label for="dateRotationRounds">每个日期扫描轮数</label>
+                <input type="number" id="dateRotationRounds" name="dateRotationRounds" min="1" step="1" placeholder="默认 3 轮后切换日期">
+            </div>
             <div class="form-row">
                 <label for="refreshIntervalMs">每轮间隔（毫秒）</label>
                 <input type="number" id="refreshIntervalMs" name="refreshIntervalMs" min="0" step="100" placeholder="2000">

@@ -25,6 +25,7 @@
             areaScanIntervalMs: 800,
             maxAreaClicksPerRefresh: 12,
             maxSeatRow: 0,
+            dateRotationRounds: 3,
             bookingSessionTimeoutMinutes: 9.5,
             captchaOcr: {
                 enabled: true,

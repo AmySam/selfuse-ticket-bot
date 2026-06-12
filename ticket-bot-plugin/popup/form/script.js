@@ -12,6 +12,7 @@ const preserveEmptyFields = new Set([
     "maxAreaClicksPerRefresh",
     "maxSeatRow",
     "bookingSessionTimeoutMinutes",
+    "dateRotationRounds",
     "delivery",
     "phoneNo",
     "mobileNo",
@@ -100,6 +101,12 @@ function normalizeBookingData(form) {
         .split(",")
         .map(item => item.trim())
         .filter(Boolean);
+    if (Object.prototype.hasOwnProperty.call(data, "dates")) {
+        data.dates = (data.dates || "")
+            .split(",")
+            .map(item => item.trim())
+            .filter(Boolean);
+    }
     data.platform = platformParam || getSubmitButton(form).id;
     return data;
 }

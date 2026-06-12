@@ -80,7 +80,10 @@ function createConcertItem(booking, index) {
     concertId.textContent = `演出链接/ID: ${booking["concert-id"] || ""}`;
 
     let date = document.createElement("p");
-    date.textContent = `日期: ${booking.date || ""}`;
+    const bookingDates = Array.isArray(booking.dates) && booking.dates.length
+        ? booking.dates.join(", ")
+        : booking.date || "";
+    date.textContent = `日期: ${bookingDates}`;
 
     let time = document.createElement("p");
     time.textContent = `时间: ${booking.time || ""}`;
@@ -107,6 +110,12 @@ function createConcertItem(booking, index) {
         const seatRowValue = getBookingValue(booking, "maxSeatRow", interparkDefaults.maxSeatRow || 0);
         maxSeatRow.textContent = Number(seatRowValue) > 0 ? `座位排过滤: 前 ${seatRowValue} 排` : "座位排过滤: 不限制";
         concertInfo.appendChild(maxSeatRow);
+
+        if (Array.isArray(booking.dates) && booking.dates.length > 1) {
+            let dateRotation = document.createElement("p");
+            dateRotation.textContent = `日期轮询: 每个日期 ${getBookingValue(booking, "dateRotationRounds", interparkDefaults.dateRotationRounds || 3)} 轮`;
+            concertInfo.appendChild(dateRotation);
+        }
 
         let timeout = document.createElement("p");
         const timeoutValue = getBookingValue(booking, "bookingSessionTimeoutMinutes", interparkDefaults.bookingSessionTimeoutMinutes || 9.5);
@@ -186,15 +195,18 @@ function getStopMessage(platform) {
 }
 
 async function startBooking(booking) {
+    const runConfig = Object.assign({}, booking, {
+        dateRotationIndex: 0,
+    });
     await store_value(storageKeys.botRunState, {
         running: true,
         platform: booking.platform,
         concertId: booking["concert-id"],
-        config: booking,
+        config: runConfig,
     });
 
     try {
-        await sendActiveTabMessage(getStartMessage(booking));
+        await sendActiveTabMessage(getStartMessage(runConfig));
     } catch (error) {
         console.error("Start failed:", error);
         openBookingUrl(booking.platform, booking["concert-id"]);

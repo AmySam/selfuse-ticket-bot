@@ -13,6 +13,7 @@
     const DEFAULT_REFRESH_JITTER_MS = interparkConfig.refreshJitterMs || 600;
     const DEFAULT_AREA_SCAN_INTERVAL_MS = interparkConfig.areaScanIntervalMs || 800;
     const DEFAULT_MAX_AREA_CLICKS = interparkConfig.maxAreaClicksPerRefresh || 12;
+    const DEFAULT_DATE_ROTATION_ROUNDS = interparkConfig.dateRotationRounds || 3;
     const DEFAULT_BOOKING_SESSION_TIMEOUT_MINUTES = interparkConfig.bookingSessionTimeoutMinutes || 9.5;
     const USE_SEAT_DETAIL_API_FLOW = interparkConfig.useSeatDetailApiFlow === true;
     const captchaOcrConfig = interparkConfig.captchaOcr || {};
@@ -38,6 +39,7 @@
     let lockedSeatContext = null;
     let botState = BOT_STATE.IDLE;
     let queueHeartbeatCount = 0;
+    let dateScanRoundCount = 0;
     const pageStartedAt = typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
         ? performance.timeOrigin
         : Date.now();
@@ -67,6 +69,35 @@
 
     function normalizeTimeValue(value) {
         return String(value || "").replace(/[^\d]/g, "").slice(0, 4);
+    }
+
+    function getConfiguredDates() {
+        const configured = activeConfig && activeConfig.dates;
+        const source = Array.isArray(configured)
+            ? configured
+            : String(configured || "").split(",");
+        const dates = source
+            .map(normalizeDateValue)
+            .filter(value => value.length === 8);
+        const fallback = normalizeDateValue(activeConfig && activeConfig.date);
+        if (!dates.length && fallback.length === 8) {
+            dates.push(fallback);
+        }
+        return Array.from(new Set(dates));
+    }
+
+    function getDateRotationIndex() {
+        const dates = getConfiguredDates();
+        const configuredIndex = Number(activeConfig && activeConfig.dateRotationIndex);
+        if (!dates.length || !Number.isFinite(configuredIndex)) {
+            return 0;
+        }
+        return Math.max(0, Math.floor(configuredIndex)) % dates.length;
+    }
+
+    function getActiveTargetDate() {
+        const dates = getConfiguredDates();
+        return dates[getDateRotationIndex()] || "";
     }
 
     function notifyFeishu(message) {
@@ -1095,6 +1126,14 @@
 
     function getMaxSeatRow() {
         return getNumericRunConfig("maxSeatRow", interparkConfig.maxSeatRow || 0, { integer: true });
+    }
+
+    function getDateRotationRounds() {
+        return Math.max(1, getNumericRunConfig(
+            "dateRotationRounds",
+            DEFAULT_DATE_ROTATION_ROUNDS,
+            { integer: true }
+        ));
     }
 
     function getBookingSessionTimeoutMs() {
@@ -2211,19 +2250,27 @@
     }
 
     function chooseDateTimeOption(options) {
-        const targetDate = normalizeDateValue(activeConfig && activeConfig.date);
+        const targetDate = getActiveTargetDate();
         const targetTime = normalizeTimeValue(activeConfig && activeConfig.time);
 
-        return options.find(option => {
+        const exact = options.find(option => {
             const dateMatches = !targetDate || option.playDate === targetDate;
             const timeMatches = !targetTime || option.playTime === targetTime || normalizeTimeValue(option.text).includes(targetTime);
             return dateMatches && timeMatches;
-        }) || options.find(option => !targetDate || option.playDate === targetDate) || options[0] || null;
+        }) || options.find(option => !targetDate || option.playDate === targetDate);
+        if (exact || getConfiguredDates().length > 1) {
+            return exact || null;
+        }
+        return options[0] || null;
     }
 
     function choosePlayDateOption(options) {
-        const targetDate = normalizeDateValue(activeConfig && activeConfig.date);
-        return options.find(option => !targetDate || option.playDate === targetDate) || options[0] || null;
+        const targetDate = getActiveTargetDate();
+        const exact = options.find(option => !targetDate || option.playDate === targetDate);
+        if (exact || getConfiguredDates().length > 1) {
+            return exact || null;
+        }
+        return options[0] || null;
     }
 
     function choosePlaySeqOption(options) {
@@ -2245,8 +2292,8 @@
         return null;
     }
 
-    async function ensureDateTimeSelected() {
-        if (isSeatStepReady()) {
+    async function ensureDateTimeSelected(force = false) {
+        if (!force && isSeatStepReady()) {
             return true;
         }
 
@@ -2288,6 +2335,78 @@
         }
 
         return waitForSeatStep();
+    }
+
+    function findChangeDateElement() {
+        const stepFrame = document.getElementById("ifrmBookStep");
+        const documents = [
+            getSeatDocument(),
+            stepFrame && stepFrame.contentDocument,
+            document,
+        ].filter(Boolean);
+
+        for (const documentLike of documents) {
+            const element = Array.from(documentLike.querySelectorAll(
+                "a, button, input[type='button'], input[type='submit'], img, span"
+            ))
+                .filter(isElementVisible)
+                .find(candidate => {
+                    const text = normalizeText([
+                        candidate.innerText || candidate.textContent || "",
+                        candidate.value || "",
+                        candidate.alt || "",
+                        candidate.title || "",
+                        candidate.getAttribute("onclick") || "",
+                        candidate.getAttribute("href") || "",
+                    ].join(" "));
+                    return /重新选择日期|修改日期|更改日期|Change\s*Date|Select\s*Date|날짜.*(?:변경|선택)/i.test(text);
+                });
+            if (element) {
+                return element;
+            }
+        }
+        return null;
+    }
+
+    async function storeActiveRunConfig() {
+        await store_value(getRunStateKey(), {
+            running: true,
+            platform: PLATFORM,
+            concertId: activeConfig && activeConfig["concert-id"],
+            config: activeConfig,
+        });
+    }
+
+    async function rotateToNextDate() {
+        const dates = getConfiguredDates();
+        if (dates.length < 2) {
+            return false;
+        }
+
+        const changeDateElement = findChangeDateElement();
+        if (!changeDateElement) {
+            updateStatus("Multiple dates configured, but the change-date control was not found.");
+            return false;
+        }
+
+        const nextIndex = (getDateRotationIndex() + 1) % dates.length;
+        updateStatus(`Switching date to ${dates[nextIndex]} in the current booking session.`);
+        if (!await clickElement(changeDateElement)) {
+            updateStatus("Change-date control click failed.");
+            return false;
+        }
+
+        if (!await waitForDateTimeStep()) {
+            updateStatus("Date/time step did not open after clicking change date.");
+            return false;
+        }
+
+        activeConfig = Object.assign({}, activeConfig, {
+            dateRotationIndex: nextIndex,
+        });
+        await storeActiveRunConfig();
+        dateScanRoundCount = 0;
+        return ensureDateTimeSelected(true);
     }
 
     function selectOption(documentLike, selector, preferredValue, fallbackText) {
@@ -2865,6 +2984,16 @@
                     ? ` | areas: ${availableAreas.map(entry => `${entry.code}=${entry.count}`).join(", ")}`
                     : "";
                 updateStatus(`Found ${available} available seat(s): ${formatSummary(summary)}${areaText}`);
+            }
+
+            if (getConfiguredDates().length > 1) {
+                dateScanRoundCount += 1;
+                if (dateScanRoundCount >= getDateRotationRounds()) {
+                    if (await rotateToNextDate()) {
+                        continue;
+                    }
+                    dateScanRoundCount = 0;
+                }
             }
 
             await delay(getRefreshDelayMs());
