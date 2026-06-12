@@ -2356,10 +2356,12 @@
                         candidate.value || "",
                         candidate.alt || "",
                         candidate.title || "",
+                        candidate.id || "",
+                        candidate.className || "",
                         candidate.getAttribute("onclick") || "",
                         candidate.getAttribute("href") || "",
                     ].join(" "));
-                    return /重新选择日期|修改日期|更改日期|Change\s*Date|Select\s*Date|날짜.*(?:변경|선택)/i.test(text);
+                    return /重新选择日期|重新選擇日期|修改日期|更改日期|變更日期|Change\s*Date|Select\s*Date|날짜.*(?:변경|선택)|(?:change|select|reselect).*date|date.*(?:change|select|reselect)|BookDatetime|fn(?:Prev|Back|Cancel).*Step/i.test(text);
                 });
             if (element) {
                 return element;
@@ -2377,35 +2379,117 @@
         });
     }
 
+    function getOptionDate(option) {
+        const valueDate = normalizeDateValue(option && option.value);
+        if (valueDate.length === 8) {
+            return valueDate;
+        }
+        const textDate = normalizeDateValue(option && option.text);
+        return textDate.length === 8 ? textDate : "";
+    }
+
+    function getOptionTime(option) {
+        const textTime = normalizeTimeValue(option && option.text);
+        if (textTime.length === 4) {
+            return textTime;
+        }
+        const valueTime = normalizeTimeValue(option && option.value);
+        return valueTime.length === 4 ? valueTime : "";
+    }
+
+    function findSeatDateSelect() {
+        const seatDocument = getSeatDocument();
+        if (!seatDocument) {
+            return null;
+        }
+
+        const configuredDates = new Set(getConfiguredDates());
+        return Array.from(seatDocument.querySelectorAll("select")).find(select => {
+            const optionDates = Array.from(select.options || [])
+                .map(getOptionDate)
+                .filter(Boolean);
+            return optionDates.some(value => configuredDates.has(value));
+        }) || null;
+    }
+
+    function findSeatTimeSelect() {
+        const seatDocument = getSeatDocument();
+        const targetTime = normalizeTimeValue(activeConfig && activeConfig.time);
+        if (!seatDocument || !targetTime) {
+            return null;
+        }
+
+        return Array.from(seatDocument.querySelectorAll("select")).find(select => {
+            return Array.from(select.options || []).some(option => {
+                return getOptionTime(option) === targetTime;
+            });
+        }) || null;
+    }
+
+    async function selectDateInSeatPage(targetDate) {
+        const dateSelect = findSeatDateSelect();
+        if (!dateSelect) {
+            return false;
+        }
+
+        const option = Array.from(dateSelect.options || []).find(item => {
+            return getOptionDate(item) === targetDate;
+        });
+        if (!option) {
+            updateStatus(`Configured date ${targetDate} is not available in the seat-page selector.`);
+            return false;
+        }
+
+        dateSelect.value = option.value;
+        dispatchFieldEvents(dateSelect);
+        updateStatus(`Selected date ${targetDate} from the seat-page selector.`);
+        await delay(800);
+
+        const timeSelect = findSeatTimeSelect();
+        const targetTime = normalizeTimeValue(activeConfig && activeConfig.time);
+        if (timeSelect && targetTime) {
+            const timeOption = Array.from(timeSelect.options || []).find(item => {
+                return getOptionTime(item) === targetTime;
+            });
+            if (timeOption) {
+                timeSelect.value = timeOption.value;
+                dispatchFieldEvents(timeSelect);
+                updateStatus(`Selected time ${targetTime.slice(0, 2)}:${targetTime.slice(2)}.`);
+                await delay(800);
+            }
+        }
+
+        return true;
+    }
+
     async function rotateToNextDate() {
         const dates = getConfiguredDates();
         if (dates.length < 2) {
             return false;
         }
 
-        const changeDateElement = findChangeDateElement();
-        if (!changeDateElement) {
-            updateStatus("Multiple dates configured, but the change-date control was not found.");
-            return false;
-        }
-
         const nextIndex = (getDateRotationIndex() + 1) % dates.length;
         updateStatus(`Switching date to ${dates[nextIndex]} in the current booking session.`);
-        if (!await clickElement(changeDateElement)) {
-            updateStatus("Change-date control click failed.");
-            return false;
-        }
-
-        if (!await waitForDateTimeStep()) {
-            updateStatus("Date/time step did not open after clicking change date.");
-            return false;
-        }
 
         activeConfig = Object.assign({}, activeConfig, {
             dateRotationIndex: nextIndex,
         });
         await storeActiveRunConfig();
         dateScanRoundCount = 0;
+
+        if (await selectDateInSeatPage(dates[nextIndex])) {
+            return waitForSeatStep();
+        }
+
+        const changeDateElement = findChangeDateElement();
+        if (!changeDateElement) {
+            updateStatus(`Date rotation blocked: no seat-page date selector or change-date control for ${dates[nextIndex]}.`);
+            return false;
+        }
+        if (!await clickElement(changeDateElement) || !await waitForDateTimeStep()) {
+            updateStatus("Date/time step did not open after clicking change date.");
+            return false;
+        }
         return ensureDateTimeSelected(true);
     }
 
@@ -2988,6 +3072,11 @@
 
             if (getConfiguredDates().length > 1) {
                 dateScanRoundCount += 1;
+                const dates = getConfiguredDates();
+                updateStatus(
+                    `Date ${dates[getDateRotationIndex()]} scan round `
+                    + `${dateScanRoundCount}/${getDateRotationRounds()}.`
+                );
                 if (dateScanRoundCount >= getDateRotationRounds()) {
                     if (await rotateToNextDate()) {
                         continue;
