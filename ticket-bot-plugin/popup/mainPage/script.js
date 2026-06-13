@@ -329,4 +329,28 @@ function getPlatformImageSrc(platform) {
     }
 }
 
+function loadEventLog() {
+    const container = document.getElementById("event-log-list");
+    chrome.storage.local.get("ticketBotEventLog", result => {
+        const events = Array.isArray(result.ticketBotEventLog)
+            ? result.ticketBotEventLog.slice(-10).reverse()
+            : [];
+        container.innerHTML = "";
+        if (!events.length) {
+            container.textContent = "暂无记录";
+            return;
+        }
+
+        events.forEach(event => {
+            const entry = document.createElement("div");
+            entry.className = "event-log-entry";
+            const time = event.createdAt ? new Date(event.createdAt).toLocaleString() : "";
+            const details = event.details && (event.details.responseMessage || event.details.reason || event.details.code);
+            entry.textContent = `${time} [${event.type}] ${event.message}${details ? ` | ${details}` : ""}`;
+            container.appendChild(entry);
+        });
+    });
+}
+
 loadAutoBooking();
+loadEventLog();

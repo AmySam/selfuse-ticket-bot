@@ -11,14 +11,22 @@ async function sendFeiShuMsg(webhookUrl, msg) {
         },
     };
 
-    fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-    })
-        .then(res => res.json())
-        .then(json => console.log('结果:', json))
-        .catch(err => console.error('错误:', err));
+    try {
+        const response = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        console.log('飞书结果:', result);
+        return result;
+    } catch (error) {
+        console.error('飞书错误:', error);
+        return {
+            code: -1,
+            msg: error.message || String(error),
+        };
+    }
 }

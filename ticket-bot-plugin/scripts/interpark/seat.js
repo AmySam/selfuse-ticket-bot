@@ -133,11 +133,43 @@
             || normalizeTimeValue(activeConfig && activeConfig.time);
     }
 
+    function recordEvent(type, message, details = {}) {
+        const entry = {
+            type,
+            message,
+            details,
+            createdAt: new Date().toISOString(),
+        };
+        console.log("[Interpark event]", entry);
+        chrome.storage.local.get("ticketBotEventLog", result => {
+            const events = Array.isArray(result.ticketBotEventLog) ? result.ticketBotEventLog : [];
+            events.push(entry);
+            chrome.storage.local.set({
+                ticketBotEventLog: events.slice(-100),
+            });
+        });
+    }
+
     function notifyFeishu(message) {
         const webhookUrl = activeConfig && activeConfig["feishu-bot-id"];
-        if (webhookUrl && typeof sendFeiShuMsg === "function") {
-            sendFeiShuMsg(webhookUrl, `[${new Date().toLocaleString()}] ${message}`);
+        if (!webhookUrl) {
+            recordEvent("feishu_skipped", message, { reason: "webhook_not_configured" });
+            return;
         }
+        if (typeof sendFeiShuMsg !== "function") {
+            recordEvent("feishu_failed", message, { reason: "sender_unavailable" });
+            return;
+        }
+
+        const notification = `[${new Date().toLocaleString()}] 抢票助手 ${message}`;
+        sendFeiShuMsg(webhookUrl, notification).then(result => {
+            const resultCode = result && (result.code ?? result.StatusCode);
+            const success = Number(resultCode || 0) === 0;
+            recordEvent(success ? "feishu_sent" : "feishu_failed", message, {
+                code: resultCode,
+                responseMessage: result && (result.msg || result.StatusMessage) || "",
+            });
+        });
     }
 
     function formatSeatBrief(seat) {
@@ -3103,6 +3135,10 @@
             if (result.areaResult && result.areaResult.selected) {
                 setBotState(BOT_STATE.SELECTED);
                 const selectedArea = result.areaResult.clicked[0] && result.areaResult.clicked[0].code;
+                recordEvent("seat_selected", "Interpark page seat selection succeeded", {
+                    area: selectedArea || "",
+                    seats: lockedSeatContext && lockedSeatContext.selected || [],
+                });
                 notifySelectedSeats(`Interpark 已选中区域 ${selectedArea || "-"} 的座位，进入下一步`, lockedSeatContext && lockedSeatContext.selected);
                 await markRunStateStopped();
                 botRunning = false;
@@ -3116,6 +3152,10 @@
             if (result.areaResult && result.areaResult.locked) {
                 setBotState(BOT_STATE.LOCKED);
                 const firstSeat = lockedSeatContext && lockedSeatContext.firstSeat;
+                recordEvent("seat_locked", "Interpark seat lock succeeded", {
+                    firstSeat: firstSeat || null,
+                    seats: lockedSeatContext && lockedSeatContext.selected || [],
+                });
                 updateStatus(`Seat locked${firstSeat ? ` (${firstSeat.block || ""} ${firstSeat.seatNo || ""})` : ""}; stopped refresh/lock loop.`);
                 if (firstSeat) {
                     notifySelectedSeats("Interpark 锁座成功", lockedSeatContext && lockedSeatContext.selected || [firstSeat]);
