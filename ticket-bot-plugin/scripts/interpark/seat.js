@@ -3194,7 +3194,7 @@
         }
     }
 
-    async function clickNolBuyButton() {
+    function findNolBuyButton() {
         const candidates = Array.from(document.querySelectorAll("button, a"))
             .filter(element => {
                 const text = normalizeText([
@@ -3202,17 +3202,22 @@
                     element.getAttribute("aria-label") || "",
                     element.getAttribute("title") || "",
                 ].join(" "));
-                return /立即购买|Buy|Book|예매/i.test(text);
+                return /立即购买|立即購買|购票|購票|购买|購買|预订|預訂|订购|訂購|Buy(?:\s+Now)?|Book(?:\s+Now)?|Reservation|예매/i.test(text);
             });
-        const target = candidates.find(element => {
+        return candidates.find(element => {
             const rect = element.getBoundingClientRect();
             const style = getComputedStyle(element);
             return !element.disabled
+                && element.getAttribute("aria-disabled") !== "true"
                 && rect.width > 0
                 && rect.height > 0
                 && style.display !== "none"
+                && style.pointerEvents !== "none"
                 && style.visibility !== "hidden";
-        });
+        }) || null;
+    }
+
+    async function clickNolBuyButton(target = findNolBuyButton()) {
         if (target) {
             if (await clickVisibleElement(target)) {
                 updateStatus("Clicked NOL buy button.");
@@ -3226,21 +3231,46 @@
         return false;
     }
 
-    async function waitAndClickNolBuyButton(timeoutMs = 30000) {
-        const startedAt = Date.now();
-        while (Date.now() - startedAt < timeoutMs) {
-            if (!botRunning) {
+    async function waitAndClickNolBuyButton() {
+        let stableTarget = null;
+        let stableSince = 0;
+        let heartbeatAt = 0;
+
+        while (botRunning && isNolProductPage()) {
+            if (!await syncRunStateConfig()) {
                 return false;
             }
 
-            if (await clickNolBuyButton()) {
-                return true;
+            const target = findNolBuyButton();
+            if (!target) {
+                stableTarget = null;
+                stableSince = 0;
+            } else if (target !== stableTarget) {
+                stableTarget = target;
+                stableSince = Date.now();
+            } else if (
+                document.readyState === "complete"
+                && Date.now() - stableSince >= 2000
+            ) {
+                if (await clickNolBuyButton(target)) {
+                    return true;
+                }
+                stableTarget = null;
+                stableSince = 0;
             }
 
-            await delay(1000);
+            if (Date.now() - heartbeatAt >= 5000) {
+                updateStatus(target
+                    ? "Buy button found; waiting for product page to finish initializing."
+                    : "Waiting for the NOL buy button...");
+                heartbeatAt = Date.now();
+            }
+            await delay(500);
         }
 
-        updateStatus("Buy button was not found after waiting.");
+        if (botRunning) {
+            updateStatus("Left the NOL product page while waiting for the buy button.");
+        }
         return false;
     }
 
