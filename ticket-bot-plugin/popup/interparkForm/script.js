@@ -88,6 +88,19 @@ document.addEventListener("include-html-loaded", function() {
                 </select>
             </div>
         `;
+        const heartbeatRow = document.createElement("div");
+        heartbeatRow.className = "form-row";
+        heartbeatRow.innerHTML = `
+            <label for="staleHeartbeatMinutes">Heartbeat alert when page is unchanged (minutes)</label>
+            <input type="number" id="staleHeartbeatMinutes" name="staleHeartbeatMinutes" min="0" step="1" placeholder="20, 0 disables">
+        `;
+        const timeoutInput = settings.querySelector("#bookingSessionTimeoutMinutes");
+        const timeoutRow = timeoutInput && timeoutInput.closest(".form-row");
+        if (timeoutRow) {
+            timeoutRow.after(heartbeatRow);
+        } else {
+            settings.appendChild(heartbeatRow);
+        }
         fieldset.appendChild(settings);
     }
 });

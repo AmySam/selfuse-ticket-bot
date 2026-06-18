@@ -27,6 +27,7 @@
             maxSeatRow: 0,
             dateRotationRounds: 3,
             bookingSessionTimeoutMinutes: 9.5,
+            staleHeartbeatMinutes: 20,
             captchaOcr: {
                 enabled: true,
                 serviceUrl: 'http://127.0.0.1:17861/ocr',

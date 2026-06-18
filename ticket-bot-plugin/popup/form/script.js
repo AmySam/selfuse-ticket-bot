@@ -12,6 +12,7 @@ const preserveEmptyFields = new Set([
     "maxAreaClicksPerRefresh",
     "maxSeatRow",
     "bookingSessionTimeoutMinutes",
+    "staleHeartbeatMinutes",
     "dateRotationRounds",
     "delivery",
     "phoneNo",

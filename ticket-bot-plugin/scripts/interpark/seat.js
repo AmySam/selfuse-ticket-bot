@@ -15,6 +15,7 @@
     const DEFAULT_MAX_AREA_CLICKS = interparkConfig.maxAreaClicksPerRefresh || 12;
     const DEFAULT_DATE_ROTATION_ROUNDS = interparkConfig.dateRotationRounds || 3;
     const DEFAULT_BOOKING_SESSION_TIMEOUT_MINUTES = interparkConfig.bookingSessionTimeoutMinutes || 9.5;
+    const DEFAULT_STALE_HEARTBEAT_MINUTES = interparkConfig.staleHeartbeatMinutes || 20;
     const USE_SEAT_DETAIL_API_FLOW = interparkConfig.useSeatDetailApiFlow === true;
     const captchaOcrConfig = interparkConfig.captchaOcr || {};
     const BOT_STATE = {
@@ -40,6 +41,12 @@
     let botState = BOT_STATE.IDLE;
     let queueHeartbeatCount = 0;
     let dateScanRoundCount = 0;
+    let lastPageActivityAt = Date.now();
+    let lastPageActivityReason = "initial";
+    let lastObservedHref = location.href;
+    let lastStaleHeartbeatNotifyAt = 0;
+    let pageActivityObserver = null;
+    let heartbeatMonitorTimer = null;
     const pageStartedAt = typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
         ? performance.timeOrigin
         : Date.now();
@@ -150,6 +157,120 @@
         });
     }
 
+    function markPageActivity(reason) {
+        lastPageActivityAt = Date.now();
+        lastPageActivityReason = reason || "page";
+    }
+
+    function isStatusPanelNode(node) {
+        if (!node) {
+            return false;
+        }
+
+        if (node.nodeType === Node.TEXT_NODE) {
+            return isStatusPanelNode(node.parentNode);
+        }
+
+        if (node.id === "ticket-bot-interpark-status") {
+            return true;
+        }
+
+        return typeof node.closest === "function"
+            && Boolean(node.closest("#ticket-bot-interpark-status"));
+    }
+
+    function isOwnStatusMutation(mutation) {
+        if (!isStatusPanelNode(mutation.target)) {
+            return false;
+        }
+
+        const addedNodes = Array.from(mutation.addedNodes || []);
+        const removedNodes = Array.from(mutation.removedNodes || []);
+        return addedNodes.every(isStatusPanelNode) && removedNodes.every(isStatusPanelNode);
+    }
+
+    function getStaleHeartbeatMs() {
+        const minutes = getNumericRunConfig("staleHeartbeatMinutes", DEFAULT_STALE_HEARTBEAT_MINUTES);
+        return minutes > 0 ? minutes * 60 * 1000 : 0;
+    }
+
+    function startHeartbeatMonitor() {
+        markPageActivity("start");
+        lastObservedHref = location.href;
+        lastStaleHeartbeatNotifyAt = 0;
+
+        if (pageActivityObserver) {
+            pageActivityObserver.disconnect();
+        }
+
+        pageActivityObserver = new MutationObserver(mutations => {
+            if (!botRunning) {
+                return;
+            }
+
+            if (mutations.length && mutations.every(isOwnStatusMutation)) {
+                return;
+            }
+
+            markPageActivity("dom");
+        });
+        pageActivityObserver.observe(document.documentElement, {
+            attributes: true,
+            childList: true,
+            characterData: true,
+            subtree: true,
+        });
+
+        clearInterval(heartbeatMonitorTimer);
+        heartbeatMonitorTimer = setInterval(checkStaleHeartbeat, 30000);
+    }
+
+    function stopHeartbeatMonitor() {
+        clearInterval(heartbeatMonitorTimer);
+        heartbeatMonitorTimer = null;
+        if (pageActivityObserver) {
+            pageActivityObserver.disconnect();
+            pageActivityObserver = null;
+        }
+    }
+
+    async function checkStaleHeartbeat() {
+        if (!botRunning) {
+            return false;
+        }
+
+        if (location.href !== lastObservedHref) {
+            lastObservedHref = location.href;
+            markPageActivity("url");
+            return false;
+        }
+
+        const staleMs = getStaleHeartbeatMs();
+        if (!staleMs) {
+            return false;
+        }
+
+        const now = Date.now();
+        const staleForMs = now - lastPageActivityAt;
+        if (staleForMs < staleMs || now - lastStaleHeartbeatNotifyAt < staleMs) {
+            return false;
+        }
+
+        lastStaleHeartbeatNotifyAt = now;
+        const staleMinutes = Math.floor(staleForMs / 60000);
+        const configuredMinutes = Math.round(staleMs / 60000);
+        const message = `Heartbeat alert: page unchanged for ${staleMinutes} minutes (limit ${configuredMinutes}); state=${botState}; reason=${lastPageActivityReason}; url=${location.href}`;
+        recordEvent("stale_heartbeat", message, {
+            staleForMs,
+            staleMinutes,
+            state: botState,
+            lastActivityReason: lastPageActivityReason,
+            url: location.href,
+        });
+        notifyFeishu(message);
+        return true;
+    }
+
     function notifyFeishu(message) {
         const webhookUrl = activeConfig && activeConfig["feishu-bot-id"];
         if (!webhookUrl) {
@@ -208,6 +329,7 @@
     async function pauseBotWithNotification(message) {
         botRunning = false;
         clearTimeout(refreshTimer);
+        stopHeartbeatMonitor();
         await markRunStateStopped();
         setBotState(BOT_STATE.STOPPED);
         updateStatus(message);
@@ -221,6 +343,7 @@
 
         botState = nextState;
         console.log(`[Interpark] state -> ${nextState}${detail ? `: ${detail}` : ""}`);
+        markPageActivity("state");
     }
 
     function getConfiguredProductUrl(botConfig) {
@@ -312,6 +435,7 @@
         if (!runState || !runState.running || runState.platform !== PLATFORM) {
             botRunning = false;
             clearTimeout(refreshTimer);
+            stopHeartbeatMonitor();
             setBotState(BOT_STATE.STOPPED);
             updateStatus("Stopped by current run state.");
             return false;
@@ -3107,6 +3231,8 @@
 
     async function runRefreshLoop() {
         while (botRunning) {
+            await checkStaleHeartbeat();
+
             if (!await syncRunStateConfig()) {
                 return;
             }
@@ -3142,6 +3268,7 @@
                 notifySelectedSeats(`Interpark 已选中区域 ${selectedArea || "-"} 的座位，进入下一步`, lockedSeatContext && lockedSeatContext.selected);
                 await markRunStateStopped();
                 botRunning = false;
+                stopHeartbeatMonitor();
                 return;
             }
 
@@ -3162,6 +3289,7 @@
                 }
                 await markRunStateStopped();
                 botRunning = false;
+                stopHeartbeatMonitor();
                 return;
             }
 
@@ -3236,7 +3364,42 @@
         let stableSince = 0;
         let heartbeatAt = 0;
 
+        async function waitForNolPageAfterClick(maxWaitMs = 25000) {
+            const startedAt = Date.now();
+            let settledTarget = null;
+            let settledSince = 0;
+
+            while (botRunning && Date.now() - startedAt < maxWaitMs) {
+                await checkStaleHeartbeat();
+
+                if (!isNolProductPage()) {
+                    return "redirected";
+                }
+
+                if (!await syncRunStateConfig()) {
+                    return "stopped";
+                }
+
+                const target = findNolBuyButton();
+                if (document.readyState !== "complete" || !target) {
+                    settledTarget = null;
+                    settledSince = 0;
+                } else if (target !== settledTarget) {
+                    settledTarget = target;
+                    settledSince = Date.now();
+                } else if (Date.now() - settledSince >= 2000) {
+                    return "settled";
+                }
+
+                await delay(500);
+            }
+
+            return isNolProductPage() ? "timeout" : "redirected";
+        }
+
         while (botRunning && isNolProductPage()) {
+            await checkStaleHeartbeat();
+
             if (!await syncRunStateConfig()) {
                 return false;
             }
@@ -3253,7 +3416,18 @@
                 && Date.now() - stableSince >= 2000
             ) {
                 if (await clickNolBuyButton(target)) {
-                    return true;
+                    updateStatus("Clicked NOL buy button; waiting for redirect or page settle.");
+                    const clickResult = await waitForNolPageAfterClick();
+                    if (clickResult === "redirected") {
+                        return true;
+                    }
+                    if (clickResult === "stopped") {
+                        return false;
+                    }
+                    updateStatus("Still on NOL product page after load settled; retrying buy button.");
+                    stableTarget = null;
+                    stableSince = 0;
+                    continue;
                 }
                 stableTarget = null;
                 stableSince = 0;
@@ -3316,6 +3490,8 @@
         setBotState(BOT_STATE.QUEUE_WAITING);
         queueHeartbeatCount = 0;
         while (botRunning && isInterparkWaitingPage()) {
+            await checkStaleHeartbeat();
+
             if (!await syncRunStateConfig()) {
                 return;
             }
@@ -3333,6 +3509,7 @@
         }
 
         botRunning = true;
+        startHeartbeatMonitor();
         setBotState(BOT_STATE.STARTING);
         updateStatus("Started.");
 
@@ -3340,6 +3517,8 @@
             setBotState(BOT_STATE.PRODUCT_PAGE);
             if (isMatchingBooking(activeConfig)) {
                 await waitAndClickNolBuyButton();
+            } else {
+                updateStatus("Current NOL product does not match this card.");
             }
             return;
         }
@@ -3371,6 +3550,7 @@
     async function stopBot() {
         botRunning = false;
         clearTimeout(refreshTimer);
+        stopHeartbeatMonitor();
         await markRunStateStopped();
         setBotState(BOT_STATE.STOPPED);
         updateStatus("Stopped.");

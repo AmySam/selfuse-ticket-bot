@@ -126,6 +126,11 @@ function createConcertItem(booking, index) {
         const timeoutValue = getBookingValue(booking, "bookingSessionTimeoutMinutes", interparkDefaults.bookingSessionTimeoutMinutes || 9.5);
         timeout.textContent = Number(timeoutValue) > 0 ? `订购页重开: ${timeoutValue} 分钟` : "订购页重开: 关闭";
         concertInfo.appendChild(timeout);
+
+        let heartbeat = document.createElement("p");
+        const heartbeatValue = getBookingValue(booking, "staleHeartbeatMinutes", interparkDefaults.staleHeartbeatMinutes || 20);
+        heartbeat.textContent = Number(heartbeatValue) > 0 ? `Heartbeat alert: ${heartbeatValue} min unchanged` : "Heartbeat alert: off";
+        concertInfo.appendChild(heartbeat);
     }
 
     let platformImage = document.createElement("img");
